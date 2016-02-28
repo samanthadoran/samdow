@@ -1,5 +1,8 @@
 import area, server, user, sets, sequtils, strutils
-import asyncnet, asyncdispatch
+import asyncnet, asyncdispatch, threadpool
+
+proc readMessages(): string =
+  result = stdin.readLine()
 
 proc printMessages(s: AsyncSocket) {.async.} =
   while true:
@@ -7,10 +10,12 @@ proc printMessages(s: AsyncSocket) {.async.} =
     echo(line)
 
 proc sendMessages(s: AsyncSocket) {.async.} =
+  var messageFlowVar = spawn readMessages()
   while true:
-    echo("Enter a message...")
-    let msg = stdin.readLine().strip() & "\r\L"
-    await s.send(msg)
+    if messageFlowVar.isReady():
+      asyncCheck s.send((^messageFlowVar).strip() & "\r\L")
+      messageFlowVar = spawn readMessages()
+    asyncdispatch.poll()
 
 proc main() {.async.} =
   var s = newAsyncSocket()
@@ -22,12 +27,6 @@ proc main() {.async.} =
 
   asyncCheck s.printMessages()
   asyncCheck s.sendMessages()
-  discard """
-  while true:
-    echo("Enter a message...")
-    let msg = stdin.readLine().strip() & "\r\L"
-    waitfor s.send(msg)
-  """
 
 asyncCheck main()
 runForever()
