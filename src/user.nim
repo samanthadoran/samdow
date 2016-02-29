@@ -1,4 +1,4 @@
-import hashes, asyncnet
+import hashes, asyncnet, sets
 
 type
   User* = ref UserObj
@@ -14,3 +14,7 @@ proc newUser*(name: string, socket: AsyncSocket): User =
   new(result)
   result.name = name
   result.socket = socket
+
+proc `$`*(u: User): string =
+  #Set proc `[]` requires its keys to have `$` defined, appease it.
+  result = u.name
