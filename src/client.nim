@@ -1,20 +1,32 @@
-import area, server, user, sets, sequtils, strutils
-import asyncnet, asyncdispatch, threadpool
+import area, server, user
+import asyncnet, asyncdispatch, threadpool, sets, sequtils, strutils
 
 proc readMessages(): string =
+  #Helper function so that input can be nonblocking
   result = stdin.readLine()
 
 proc printMessages(s: AsyncSocket) {.async.} =
+  #Loop forever until we get a message, then print it
   while true:
     let line = await s.recvLine()
     echo(line)
 
 proc sendMessages(s: AsyncSocket) {.async.} =
+  #Async proc to send messages on a socket
+
+  #Hold the message in a future
   var messageFlowVar = spawn readMessages()
+
+
   while true:
+    #If we have a message...
     if messageFlowVar.isReady():
+      #Send it in the proper format
       asyncCheck s.send((^messageFlowVar).strip() & "\r\L")
+      #and restart the background read proc
       messageFlowVar = spawn readMessages()
+
+    #Make sure to poll for events!
     asyncdispatch.poll()
 
 proc main() {.async.} =
