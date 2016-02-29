@@ -60,7 +60,14 @@ proc sendMessages(u: User) {.async.} =
 
 proc main() {.async.} =
   var s = newAsyncSocket()
-  await s.connect("127.0.0.1", Port(12345))
+
+  echo("Enter the address of the server you would like to connect to")
+  let address = stdin.readLine().strip()
+
+  echo("Enter its port")
+  let port = Port(stdin.readLine.strip().parseInt())
+
+  await s.connect(address, port)
 
   echo("Enter a nickname")
   let nick = stdin.readLine().strip()

@@ -7,8 +7,9 @@ type
     name*: string
     area*: Area
     users*: HashSet[User]
-    exits*: seq[Server]
+    exits*: seq[string]
     socket: AsyncSocket
+    port*: Port
 
 proc newServer*(name: string, area: Area): Server =
   new(result)
@@ -31,7 +32,7 @@ proc processMessage(s: Server, msg: Message, u: User) {.async.} =
       case msg.content.toLower()
       #List server neighbours
       of "!exits":
-        "Exits: " & $(s.exits.mapIt(it.name).join(", "))
+        "Exits: " & $(s.exits.mapIt(it).join(", "))
       #Short info about the server
       of "!info":
         "Name: " & s.name & "\nArea info: " & s.area.name
@@ -96,9 +97,9 @@ proc loadAndHandleUser(s: Server, c: AsyncSocket) {.async.} =
   #Begin handling the user
   asynccheck s.processUser(u)
 
-proc serve*(s: Server, port: int) {.async.} =
+proc serve*(s: Server) {.async.} =
   #Spin up the server
-  s.socket.bindAddr(Port(port))
+  s.socket.bindAddr(s.port)
   s.socket.listen()
 
   #Loop forever to wait for new users
@@ -106,3 +107,34 @@ proc serve*(s: Server, port: int) {.async.} =
     let clientSocket = await s.socket.accept()
     echo("Got new socket...")
     asynccheck s.loadAndHandleUser(clientSocket)
+
+when isMainModule:
+  import os
+
+  proc main() =
+    let filepath = if paramCount() > 0: paramStr(1) else: ""
+    if filepath == "":
+      echo("Please supply a file to configure server")
+      quit()
+
+    var f: File
+    if open(f, filepath):
+      let name = f.readLine().strip()
+      try:
+        let port = Port(f.readLine().strip().parseInt())
+        let areaName = f.readLine().strip()
+        let exits = f.readLine().strip().split(",").mapIt(it.strip())
+
+        var serveOne = newServer(area = newArea(areaName), name = name)
+        serveOne.port = port
+        serveOne.exits = exits
+
+        asyncCheck serveOne.serve()
+
+        runForever()
+      except ValueError:
+        echo("Bad port value, expected a number")
+    else:
+      echo("Could not open file: " & filepath)
+      quit()
+  main()
