@@ -18,6 +18,12 @@ proc newServer*(name: string, area: Area): Server =
   result.exits = @[]
   result.socket = newAsyncSocket()
 
+proc broadcastMessage(s: Server, msg: string, sender: string) {.async} =
+  if msg != "":
+    for u in s.users:
+      await u.socket.send(sender & ": " & msg & "\r\L")
+      echo("Sent message: " & msg & " to " & u.name)
+
 proc processMessage(s: Server, msg: string, u: User) {.async.} =
   #Determine if a user typed a command
   let response =
@@ -28,29 +34,27 @@ proc processMessage(s: Server, msg: string, u: User) {.async.} =
       "Name: " & s.name & "\nArea info: " & s.area.name
     of "!users":
       "Users: " & $(s.users.mapIt(it.name).join(", "))
+    of "!quit":
+      s.users.excl(u)
+      u.socket.close()
+      u.name & " has quit the server."
     else:
       ""
 
-  if response != "":
-    for u in s.users:
-      await u.socket.send(s.name & ": " & response & "\r\L")
-      echo("Sent message: " & response & " to " & u.name)
+  await s.broadcastMessage(msg = response, sender = s.name)
 
 proc processUser(s: Server, user: User) {.async.} =
   while true:
     if user.socket.isClosed():
-      s.users.excl(user)
       return
 
     let line = await user.socket.recvLine()
     echo(user.name & ": " & line)
 
-    for u in s.users:
-      await u.socket.send(user.name & ": " & line & "\r\L")
-      echo("Sent message: " & line & " to " & u.name)
+    await s.broadcastMessage(msg = line, sender = user.name)
 
     #After sending the users what was said, process it
-    asyncCheck processMessage(s, line, user)
+    await processMessage(s, line, user)
 
 proc processClient(s: Server, c: AsyncSocket) {.async.} =
   while true:
@@ -58,6 +62,9 @@ proc processClient(s: Server, c: AsyncSocket) {.async.} =
     var u = newUser(ident, c)
     s.users.incl(u)
     echo("Initialized user: " & u.name)
+
+    let joinMsg = u.name & " has joined the server."
+    await s.broadcastMessage(msg = joinMsg, sender = s.name)
 
     asynccheck s.processUser(u)
     return

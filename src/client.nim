@@ -21,10 +21,17 @@ proc sendMessages(s: AsyncSocket) {.async.} =
   while true:
     #If we have a message...
     if messageFlowVar.isReady():
+      let msg = (^messageFlowVar).strip()
+
       #Send it in the proper format
-      asyncCheck s.send((^messageFlowVar).strip() & "\r\L")
+      asyncCheck s.send(msg & "\r\L")
+
       #and restart the background read proc
       messageFlowVar = spawn readMessages()
+
+      if msg.toLower() == "!quit":
+        s.close()
+        quit()
 
     #Make sure to poll for events!
     asyncdispatch.poll()
