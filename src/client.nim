@@ -1,5 +1,4 @@
-#import area, server, user, message
-import area, user, message
+import user, message
 import asyncnet, asyncdispatch, threadpool, sets, sequtils, strutils, marshal
 
 proc readMessages(): string =
@@ -10,21 +9,28 @@ proc handleMessages(u: User) {.async.} =
   #Loop forever until we get a message, then print it
   while not u.socket.isClosed():
     let msg = marshal.to[Message](await u.socket.recvLine())
+
+    let msgTokens = msg.content.toLower().split()
+    if len(msgTokens) == 0:
+      continue
+
     case msg.mType
     of MessageType.Chat:
       echo(msg.sender & ": " & msg.content)
     of MessageType.Network:
-      case msg.content.toLower()
+      case msgTokens[0]
       of "ping":
         await u.socket.send($$Message(content: "pong", sender: u.name, mType: msg.mType))
       else:
         discard
     of MessageType.Authority:
-      case msg.content.toLower()
+      case msgTokens[0]
       of "dropping":
         u.socket.close()
         discard
       of "connect":
+        #Get a new socket...
+        #Use it for a specific message type
         discard
       else:
         discard
