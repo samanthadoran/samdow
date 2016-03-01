@@ -5,12 +5,14 @@ type
   User* = ref UserObj
   UserObj = object
     name*: string
-    socket*: AsyncSocket
     sockets*: array[MessageType.low..MessageType.high, AsyncSocket]
 
 proc hash*(u: User): Hash =
   result = u.name.hash
   result = !$result
+
+proc `==`*(u, v: User): bool =
+  u.name == v.name
 
 proc newUser*(name: string, socket: AsyncSocket): User =
   new(result)
