@@ -5,82 +5,101 @@ proc readMessages(): string =
   #Helper function so that input can be nonblocking
   result = stdin.readLine()
 
-proc handleMessages(u: User) {.async.} =
-  #Loop forever until we get a message, then print it
-  while not u.socket.isClosed():
-    let msg = marshal.to[Message](await u.socket.recvLine())
+proc handleMessages(u: User, m: MessageType) {.async.} =
+  while true:
+    #Keep the proc going, but don't listen for messages on a dead socket
+    if u.sockets[m].isClosed():
+      echo("Socket " & $m & " is closed???")
+      continue
+
+    let msg = marshal.to[Message](await u.sockets[m].recvLine())
 
     let msgTokens = msg.content.toLower().split()
     if len(msgTokens) == 0:
+      echo("The message was zero length?")
       continue
 
-    case msg.mType
+    case m
     of MessageType.Chat:
       echo(msg.sender & ": " & msg.content)
     of MessageType.Network:
       case msgTokens[0]
       of "ping":
-        await u.socket.send($$Message(content: "pong", sender: u.name, mType: msg.mType))
+        await u.sockets[m].send($$Message(content: "pong", sender: u.name, mType: msg.mType))
       else:
-        discard
+        echo($$msg)
     of MessageType.Authority:
       case msgTokens[0]
-      of "dropping":
-        u.socket.close()
-        discard
+      #Drop a server for a specific service
+      #Of the form drop MessageType
+      of "drop":
+        let messageType = parseEnum[MessageType](msgTokens[1])
+        u.sockets[messageType].close()
+      #Connect to a server for a specific message type
+      #Of the form connect hostname:port for MessageType
       of "connect":
-        #Get a new socket...
-        #Use it for a specific message type
-        discard
+        #Format the address
+        let splitAddress = msgTokens[1].split(":")
+        #Parse the type
+        let messageType = parseEnum[MessageType](msgTokens[3])
+
+        #Init the new socket and hook it in
+        var s = newAsyncSocket()
+        await s.connect(splitAddress[0], Port(splitAddress[1].parseInt()))
+        u.sockets[messageType] = s
       else:
         discard
-      discard
 
 proc sendMessages(u: User) {.async.} =
   #Async proc to send messages on a socket
 
   #Hold the message in a future
   var messageFlowVar = spawn readMessages()
-
-
-  while not u.socket.isClosed():
+  while true:
+    #Don't try to send chat on an empty socket...
     #If we have a message...
-    if messageFlowVar.isReady():
+    if messageFlowVar.isReady() and not u.sockets[MessageType.Chat].isClosed():
       let msg = (^messageFlowVar).strip()
 
       let encodedMessage = Message(content: msg, mType: MessageType.Chat, sender: u.name)
 
       #Send it in the proper format
-      await u.socket.send($$encodedMessage & "\r\L")
+      await u.sockets[MessageType.Chat].send($$encodedMessage & "\r\L")
 
       #and restart the background read proc
       messageFlowVar = spawn readMessages()
 
       if msg.toLower() == "!quit":
-        u.socket.close()
+        for m in MessageType:
+          await u.sockets[m].send($$encodedMessage & "\r\L")
+          u.sockets[m].close()
+        quit()
 
     #Make sure to poll for events!
     asyncdispatch.poll()
 
-  quit()
-
 proc main() {.async.} =
-  var s = newAsyncSocket()
-
   echo("Enter the address of the server you would like to connect to")
   let address = stdin.readLine().strip()
 
   echo("Enter its port")
   let port = Port(stdin.readLine.strip().parseInt())
 
-  await s.connect(address, port)
 
   echo("Enter a nickname")
   let nick = stdin.readLine().strip()
-  var u = newUser(nick, s)
-  await u.socket.send(nick & "\r\L")
 
-  asyncCheck u.handleMessages()
+  var u = newUser(nick, nil)
+
+  #Connect to the initial server for all services
+  for m in MessageType:
+    u.sockets[m] = newAsyncSocket()
+    await u.sockets[m].connect(address, port)
+    await u.sockets[m].send($m & "\r\L")
+    await u.sockets[m].send(nick & "\r\L")
+
+  for m in MessageType:
+    asyncCheck u.handleMessages(m)
   asyncCheck u.sendMessages()
 
 asyncCheck main()

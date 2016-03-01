@@ -1,5 +1,5 @@
 import area, user, message
-import sets, asyncnet, asyncdispatch, strutils, sequtils, marshal
+import sets, asyncnet, asyncdispatch, strutils, sequtils, marshal, threadpool
 
 type
   Server* = ref ServerObj
@@ -19,12 +19,13 @@ proc newServer*(name: string, area: Area): Server =
   result.exits = @[]
   result.socket = newAsyncSocket()
 
-proc broadcastMessage(s: Server, msg: string) {.async} =
+proc broadcastMessage(s: Server, msg: Message) {.async} =
   #Broadcast a message to all users connected to the server
   for u in s.users:
-    await u.socket.send(msg & "\r\L")
+    if u.sockets[msg.mType] != nil and not u.sockets[msg.mType].isClosed():
+      await u.sockets[msg.mType].send($$msg & "\r\L")
 
-proc processMessage(s: Server, msg: Message, u: User) {.async.} =
+proc processMessage(s: Server, msg: Message, u: User, socket: MessageType) {.async.} =
   #Determine actions based upon message type
   let response =
     case msg.mType
@@ -41,12 +42,11 @@ proc processMessage(s: Server, msg: Message, u: User) {.async.} =
         "Users: " & $(s.users.mapIt(it.name).join(", "))
       #The user has declared intent to quit the server
       of "!quit":
-        s.users.excl(u)
-        u.socket.close()
-        u.name & " has quit the server."
+        u.sockets[socket].close()
+        u.name & " has quit the server service " & $socket
       #Otherwise, it is just chat
       else:
-        await s.broadcastMessage($$msg)
+        await s.broadcastMessage(msg)
         ""
     of MessageType.Network:
       case msg.content.toLower()
@@ -59,28 +59,44 @@ proc processMessage(s: Server, msg: Message, u: User) {.async.} =
       ""
 
   if response != "":
-    await s.broadcastMessage(msg = $$Message(content: response, mType: msg.mType, sender: s.name))
+    await s.broadcastMessage(Message(content: response, mType: msg.mType, sender: s.name))
+
+proc handleMessageType(s: Server, user: User, m: MessageType) {.async.} =
+  while true:
+    if user.sockets[m] == nil or user.sockets[m].isClosed():
+      break
+    let message = marshal.to[Message](await user.sockets[m].recvLine())
+    echo($$message)
+    if message.mType != m:
+      echo("A pecularity, at best.")
+    await processMessage(s, message, user, m)
 
 proc processUser(s: Server, user: User) {.async.} =
   #Handle a specific user
   while true:
     #The user is no longer connected, break out of this handling loop.
-    if user.socket.isClosed():
-      return
+    var disconnect: bool = true
+    for m in MessageType:
+      if user.sockets[m] != nil and not user.sockets[m].isClosed():
+        disconnect = false
 
-    #Get the message sent and log it
-    let message = marshal.to[Message](await user.socket.recvLine())
-    echo($$message)
-
-    #Process the user's message
-    await processMessage(s, message, user)
+    if disconnect:
+      s.users.excl(user)
+      echo("Disconnected " & user.name & " from all services.")
+      break
+    asyncdispatch.poll()
 
 proc loadAndHandleUser(s: Server, c: AsyncSocket) {.async.} =
+  let m = parseEnum[MessageType](await c.recvLine())
   let ident = await c.recvLine()
   var u = newUser(ident, c)
+  echo("Socket is identifying as " & ident & " and requesting service " & $m)
 
   #This is a new user
   if not s.users.contains(u):
+    for mt in MessageType:
+      if mt != m:
+        u.sockets[mt] = nil
     s.users.incl(u)
     echo("Initialized user: " & u.name)
 
@@ -88,13 +104,14 @@ proc loadAndHandleUser(s: Server, c: AsyncSocket) {.async.} =
   else:
     echo("Loaded existing user: " & u.name)
     u = (s.users)[u]
-    u.socket = c
+    u.sockets[m] = c
 
-  let joinMsg = u.name & " has joined the server."
-  let encoded = $$Message(content: joinMsg, mType: MessageType.Chat, sender: s.name)
+  let joinMsg = u.name & " has joined the server for " & $m
+  let encoded = Message(content: joinMsg, mType: MessageType.Chat, sender: s.name)
   await s.broadcastMessage(msg = encoded)
 
   #Begin handling the user
+  asyncCheck s.handleMessageType(u, m)
   asynccheck s.processUser(u)
 
 proc serve*(s: Server) {.async.} =
@@ -106,7 +123,7 @@ proc serve*(s: Server) {.async.} =
   while true:
     let clientSocket = await s.socket.accept()
     echo("Got new socket...")
-    asynccheck s.loadAndHandleUser(clientSocket)
+    asyncCheck s.loadAndHandleUser(clientSocket)
 
 when isMainModule:
   import os
