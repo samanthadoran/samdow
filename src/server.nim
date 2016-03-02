@@ -1,5 +1,5 @@
 import area, user, message
-import sets, asyncnet, asyncdispatch, strutils, sequtils, marshal, threadpool
+import sets, asyncnet, asyncdispatch, strutils, sequtils, marshal, tables
 
 type
   Server* = ref ServerObj
@@ -8,6 +8,7 @@ type
     area*: Area
     users*: HashSet[User]
     exits*: seq[string]
+    externals*: Table[MessageType, string]
     socket: AsyncSocket
     port*: Port
 
@@ -17,6 +18,7 @@ proc newServer*(name: string, area: Area): Server =
   result.area = area
   result.users = initSet[User]()
   result.exits = @[]
+  result.externals = initTable[MessageType, string]()
   result.socket = newAsyncSocket()
 
 #TODO: Consider adding a recipients set parameter.
@@ -85,10 +87,29 @@ proc handleMessageType(s: Server, user: User, m: MessageType) {.async.} =
     await processMessage(s, message, user, m)
 
 proc loadAndHandleUser(s: Server, c: AsyncSocket) {.async.} =
-  let m = parseEnum[MessageType](await c.recvLine())
+  let enumLine = (await c.recvLine())
+  let m =
+    try:
+      parseEnum[MessageType](enumLine)
+    except:
+      echo("Bad enum value, got " & enumLine)
+      echo("Length of string is: ", len(enumLine))
+      quit()
+      MessageType.Authority
   let ident = await c.recvLine()
   var u = newUser(ident, c)
+
   echo("Socket is identifying as " & ident & " and requesting service " & $m)
+
+  if s.externals.hasKey(m):
+    if s.users.contains(u):
+      s.users[u].sockets[m] = c
+      u = s.users[u]
+      let msg = Message(content: "connect " & s.externals[m] & " for " & $m, mType: MessageType.Authority, sender: s.name)
+      await u.sockets[MessageType.Authority].send($$msg & "\r\L")
+      u.sockets[m].close()
+      echo("Sent to: " & s.externals[m] & " for " & $m)
+    return
 
   #This is a new user
   if not s.users.contains(u):
@@ -144,9 +165,17 @@ when isMainModule:
       let areaName = f.readLine().strip()
       let exits = f.readLine().strip().split(",").mapIt(it.strip())
 
+      let externalStrings = f.readLine().strip().split(",").mapIt(it.strip())
+      let extSplits = externalStrings.mapIt(it.split("="))
+      var externals = initTable[MessageType, string]()
+      for pair in extSplits:
+        if len(pair) > 1:
+          externals[parseEnum[MessageType](pair[0])] = pair[1]
+
       var serveOne = newServer(area = newArea(areaName), name = name)
       serveOne.port = port
       serveOne.exits = exits
+      serveOne.externals = externals
 
       asyncCheck serveOne.serve()
 

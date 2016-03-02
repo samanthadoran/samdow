@@ -11,6 +11,9 @@ proc handleMessages(u: User, m: MessageType) {.async.} =
     if u.sockets[m].isClosed():
       echo("Socket " & $m & " is closed???")
       continue
+    if u.sockets[m] == nil:
+      echo("Socket " & $m & " is nil???")
+      continue
 
     let msg = marshal.to[Message](await u.sockets[m].recvLine())
 
@@ -41,12 +44,18 @@ proc handleMessages(u: User, m: MessageType) {.async.} =
         #Format the address
         let splitAddress = msgTokens[1].split(":")
         #Parse the type
-        let messageType = parseEnum[MessageType](msgTokens[3])
+        let external = parseEnum[MessageType](msgTokens[3])
+
+        if u.sockets[external] != nil and not u.sockets[external].isClosed():
+          u.sockets[external].close()
 
         #Init the new socket and hook it in
-        var s = newAsyncSocket()
-        await s.connect(splitAddress[0], Port(splitAddress[1].parseInt()))
-        u.sockets[messageType] = s
+        u.sockets[external] = newAsyncSocket()
+        await u.sockets[external].connect(splitAddress[0], Port(splitAddress[1].parseInt()))
+        await u.sockets[external].send($external & "\r\L")
+        await u.sockets[external].send(u.name & "\r\L")
+        asyncCheck u.handleMessages(external)
+        return
       else:
         discard
 
@@ -63,6 +72,7 @@ proc sendMessages(u: User) {.async.} =
 
       let encodedMessage = Message(content: msg, mType: MessageType.Chat, sender: u.name)
 
+      #Special check for quit, send in this order to prevent crashing.
       if msg.toLower() == "!quit":
         for m in MessageType:
           await u.sockets[m].send($$encodedMessage & "\r\L")
