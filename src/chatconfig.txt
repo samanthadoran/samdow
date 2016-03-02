@@ -1,0 +1,5 @@
+Town Chat
+1235
+Default Area
+Town
+Network, Chat, Authority

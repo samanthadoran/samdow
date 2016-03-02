@@ -54,8 +54,10 @@ proc handleMessages(u: User, m: MessageType) {.async.} =
         await u.sockets[external].connect(splitAddress[0], Port(splitAddress[1].parseInt()))
         await u.sockets[external].send($external & "\r\L")
         await u.sockets[external].send(u.name & "\r\L")
+
+        #Why do I need to do this?
         asyncCheck u.handleMessages(external)
-        return
+        break
       else:
         discard
 
