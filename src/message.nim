@@ -1,6 +1,6 @@
 type
   MessageType*{.pure.} = enum
-    Network, Chat, Authority
+    Network, Authority, Chat
   Message* = object
     content*: string
     sender*: string
