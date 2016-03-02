@@ -27,6 +27,7 @@ proc broadcastMessage(s: Server, msg: Message) {.async} =
 
 proc processMessage(s: Server, msg: Message, u: User, socket: MessageType) {.async.} =
   #Determine actions based upon message type
+  echo($socket & " " & $$msg)
   let response =
     case msg.mType
     of MessageType.Chat:
@@ -53,6 +54,7 @@ proc processMessage(s: Server, msg: Message, u: User, socket: MessageType) {.asy
       of "ping":
         "pong"
       else:
+        echo($$msg)
         ""
     #Client's cannot send authority messages
     of MessageType.Authority:
@@ -62,29 +64,19 @@ proc processMessage(s: Server, msg: Message, u: User, socket: MessageType) {.asy
     await s.broadcastMessage(Message(content: response, mType: msg.mType, sender: s.name))
 
 proc handleMessageType(s: Server, user: User, m: MessageType) {.async.} =
+  echo("\n\nIn handleMessageType for: " & user.name & "'s " & $m & "\n\n")
   while true:
     if user.sockets[m] == nil or user.sockets[m].isClosed():
+      var disconnect: bool = true
+      for s in user.sockets:
+        if s != nil and not s.isClosed():
+          disconnect = false
+      if disconnect:
+        s.users.excl(user)
+        echo("Disconnecting " & user.name & " from all services.")
       break
     let message = marshal.to[Message](await user.sockets[m].recvLine())
-    echo($$message)
-    if message.mType != m:
-      echo("A pecularity, at best.")
     await processMessage(s, message, user, m)
-
-proc processUser(s: Server, user: User) {.async.} =
-  #Handle a specific user
-  while true:
-    #The user is no longer connected, break out of this handling loop.
-    var disconnect: bool = true
-    for m in MessageType:
-      if user.sockets[m] != nil and not user.sockets[m].isClosed():
-        disconnect = false
-
-    if disconnect:
-      s.users.excl(user)
-      echo("Disconnected " & user.name & " from all services.")
-      break
-    asyncdispatch.poll()
 
 proc loadAndHandleUser(s: Server, c: AsyncSocket) {.async.} =
   let m = parseEnum[MessageType](await c.recvLine())
@@ -100,6 +92,8 @@ proc loadAndHandleUser(s: Server, c: AsyncSocket) {.async.} =
     s.users.incl(u)
     echo("Initialized user: " & u.name)
 
+    #Don't process multiple times
+    #asynccheck s.processUser(u)
   #We have info on this user
   else:
     echo("Loaded existing user: " & u.name)
@@ -112,7 +106,6 @@ proc loadAndHandleUser(s: Server, c: AsyncSocket) {.async.} =
 
   #Begin handling the user
   asyncCheck s.handleMessageType(u, m)
-  asynccheck s.processUser(u)
 
 proc serve*(s: Server) {.async.} =
   #Spin up the server
@@ -123,7 +116,7 @@ proc serve*(s: Server) {.async.} =
   while true:
     let clientSocket = await s.socket.accept()
     echo("Got new socket...")
-    asyncCheck s.loadAndHandleUser(clientSocket)
+    await s.loadAndHandleUser(clientSocket)
 
 when isMainModule:
   import os
