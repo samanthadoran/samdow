@@ -19,6 +19,7 @@ proc newServer*(name: string, area: Area): Server =
   result.exits = @[]
   result.socket = newAsyncSocket()
 
+#TODO: Consider adding a recipients set parameter.
 proc broadcastMessage(s: Server, msg: Message) {.async} =
   #Broadcast a message to all users connected to the server
   for u in s.users:
@@ -44,7 +45,9 @@ proc processMessage(s: Server, msg: Message, u: User, socket: MessageType) {.asy
       #The user has declared intent to quit the server
       of "!quit":
         u.sockets[socket].close()
-        u.name & " has quit the server service " & $socket
+        #Choose not to broadcast here, causes crashes.
+        #u.name & " has quit the server service " & $socket
+        ""
       #Otherwise, it is just chat
       else:
         await s.broadcastMessage(msg)
