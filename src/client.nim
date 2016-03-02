@@ -63,17 +63,17 @@ proc sendMessages(u: User) {.async.} =
 
       let encodedMessage = Message(content: msg, mType: MessageType.Chat, sender: u.name)
 
-      #Send it in the proper format
-      await u.sockets[MessageType.Chat].send($$encodedMessage & "\r\L")
-
-      #and restart the background read proc
-      messageFlowVar = spawn readMessages()
-
       if msg.toLower() == "!quit":
         for m in MessageType:
           await u.sockets[m].send($$encodedMessage & "\r\L")
           u.sockets[m].close()
         quit()
+
+      #Send it in the proper format
+      await u.sockets[MessageType.Chat].send($$encodedMessage & "\r\L")
+
+      #and restart the background read proc
+      messageFlowVar = spawn readMessages()
 
     #Make sure to poll for events!
     asyncdispatch.poll()
