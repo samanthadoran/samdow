@@ -64,9 +64,11 @@ proc processMessage(s: Server, msg: Message, u: User, socket: MessageType) {.asy
     await s.broadcastMessage(Message(content: response, mType: msg.mType, sender: s.name))
 
 proc handleMessageType(s: Server, user: User, m: MessageType) {.async.} =
-  echo("\n\nIn handleMessageType for: " & user.name & "'s " & $m & "\n\n")
+  echo("***In handleMessageType for: " & user.name & "'s " & $m)
   while true:
+    #Do we need tostop processing this message type?
     if user.sockets[m] == nil or user.sockets[m].isClosed():
+      #Check whether all sockets are closed, if so, disconnect.
       var disconnect: bool = true
       for s in user.sockets:
         if s != nil and not s.isClosed():
@@ -75,6 +77,7 @@ proc handleMessageType(s: Server, user: User, m: MessageType) {.async.} =
         s.users.excl(user)
         echo("Disconnecting " & user.name & " from all services.")
       break
+
     let message = marshal.to[Message](await user.sockets[m].recvLine())
     await processMessage(s, message, user, m)
 
@@ -91,9 +94,6 @@ proc loadAndHandleUser(s: Server, c: AsyncSocket) {.async.} =
         u.sockets[mt] = nil
     s.users.incl(u)
     echo("Initialized user: " & u.name)
-
-    #Don't process multiple times
-    #asynccheck s.processUser(u)
   #We have info on this user
   else:
     echo("Loaded existing user: " & u.name)
@@ -130,20 +130,24 @@ when isMainModule:
     var f: File
     if open(f, filepath):
       let name = f.readLine().strip()
-      try:
-        let port = Port(f.readLine().strip().parseInt())
-        let areaName = f.readLine().strip()
-        let exits = f.readLine().strip().split(",").mapIt(it.strip())
+      let port =
+        try:
+          Port(f.readLine().strip().parseInt())
+        except ValueError:
+          echo("Bad port value, expected a number")
+          quit()
+          Port(0)
 
-        var serveOne = newServer(area = newArea(areaName), name = name)
-        serveOne.port = port
-        serveOne.exits = exits
+      let areaName = f.readLine().strip()
+      let exits = f.readLine().strip().split(",").mapIt(it.strip())
 
-        asyncCheck serveOne.serve()
+      var serveOne = newServer(area = newArea(areaName), name = name)
+      serveOne.port = port
+      serveOne.exits = exits
 
-        runForever()
-      except ValueError:
-        echo("Bad port value, expected a number")
+      asyncCheck serveOne.serve()
+
+      runForever()
     else:
       echo("Could not open file: " & filepath)
       quit()
