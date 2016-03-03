@@ -21,12 +21,15 @@ proc newServer*(name: string, area: Area): Server =
   result.externals = initTable[MessageType, string]()
   result.socket = newAsyncSocket()
 
+proc handleHeartbeat(s: Server, u: User, m: MessageType) {.async.} =
+  discard
+
 #TODO: Consider adding a recipients set parameter.
 proc broadcastMessage(s: Server, msg: Message) {.async} =
   #Broadcast a message to all users connected to the server
   for u in s.users:
-    if u.sockets[msg.mType] != nil and not u.sockets[msg.mType].isClosed():
-      await u.sockets[msg.mType].send($$msg & "\r\L")
+    if u.sockets[msg.mType].socket != nil and not u.sockets[msg.mType].socket.isClosed():
+      await u.sockets[msg.mType].socket.send($$msg & "\r\L")
 
 proc processMessage(s: Server, msg: Message, u: User, socket: MessageType) {.async.} =
   #Determine actions based upon message type
@@ -46,9 +49,9 @@ proc processMessage(s: Server, msg: Message, u: User, socket: MessageType) {.asy
         "Users: " & $(s.users.mapIt(it.name).join(", "))
       #The user has declared intent to quit the server
       of "!quit":
-        u.sockets[socket].close()
+        u.sockets[socket].heartbeat.close()
+        u.sockets[socket].socket.close()
         #Choose not to broadcast here, causes crashes.
-        #u.name & " has quit the server service " & $socket
         ""
       #Otherwise, it is just chat
       else:
@@ -72,10 +75,13 @@ proc handleMessageType(s: Server, user: User, m: MessageType) {.async.} =
   #Listen for messages on the socket
   while true:
     #Do we need tostop processing this message type?
-    if user.sockets[m] == nil or user.sockets[m].isClosed():
+    var socket = user.sockets[m].socket
+    if socket == nil or socket.isClosed():
       #Check whether all sockets are closed, if so, disconnect.
       var disconnect: bool = true
-      for s in user.sockets:
+      for tup in user.sockets:
+        var
+          (h, s) = tup
         if s != nil and not s.isClosed():
           disconnect = false
       if disconnect:
@@ -84,7 +90,7 @@ proc handleMessageType(s: Server, user: User, m: MessageType) {.async.} =
       break
 
     try:
-      let message = marshal.to[Message](await user.sockets[m].recvLine())
+      let message = marshal.to[Message](await user.sockets[m].socket.recvLine())
       await processMessage(s, message, user, m)
     except:
       echo("Bad message passed!")
@@ -104,49 +110,53 @@ proc loadAndHandleSocket(s: Server, c: AsyncSocket) {.async.} =
       MessageType.Authority
 
   let ident = await c.recvLine()
-  var u = newUser(ident, c)
+  var u = newUser(ident)
 
   echo("Socket is identifying as " & ident & " and requesting service " & $m)
 
   #Transfer logic
   if s.externals.hasKey(m):
     #We can't transfer someone who isn't already here (yet?)
-    if s.users.contains(u):
+    if s.users.contains(u) and s.users[u].sockets[m].heartbeat != nil and not s.users[u].sockets[m].heartbeat.isClosed():
       #Add the new socket to our current user
-      s.users[u].sockets[m] = c
+      s.users[u].sockets[m].socket = c
 
       #Shadow old u for brevity
       u = s.users[u]
 
       #Inform the socket of where to switch to
       let msg = Message(content: "connect " & s.externals[m] & " for " & $m, mType: MessageType.Authority, sender: s.name)
-      await u.sockets[MessageType.Authority].send($$msg & "\r\L")
+      await u.sockets[MessageType.Authority].socket.send($$msg & "\r\L")
 
       #Once the message has been sent, close the socket and log it.
-      u.sockets[m].close()
+      u.sockets[m].socket.close()
+      u.sockets[m].heartbeat.close()
       echo("Sent to: " & s.externals[m] & " for " & $m)
-    #Even if we couldn't transfer, return anyway. Nothing we can do anymore.
-    return
+      return
 
   #This is a new user
   if not s.users.contains(u):
-    for mt in MessageType:
-      if mt != m:
-        u.sockets[mt] = nil
     s.users.incl(u)
+    s.users[u].sockets[m].heartbeat = c
     echo("Initialized user: " & u.name)
   #We have info on this user
   else:
     echo("Loaded existing user: " & u.name)
     u = (s.users)[u]
-    u.sockets[m] = c
+    if u.sockets[m].heartbeat == nil or u.sockets[m].heartbeat.isClosed():
+      u.sockets[m].heartbeat = c
+    else:
+      u.sockets[m].socket = c
 
   let joinMsg = u.name & " has joined the server for " & $m
   let encoded = Message(content: joinMsg, mType: MessageType.Chat, sender: s.name)
   await s.broadcastMessage(msg = encoded)
 
   #Begin handling the user
-  asyncCheck s.handleMessageType(u, m)
+  if s.users[u].sockets[m].socket != nil and not s.users[u].sockets[m].socket.isClosed():
+    asyncCheck s.handleMessageType(u, m)
+  else:
+    asyncCheck s.handleHeartbeat(u, m)
 
 proc serve*(s: Server) {.async.} =
   #Spin up the server
