@@ -83,8 +83,11 @@ proc handleMessageType(s: Server, user: User, m: MessageType) {.async.} =
         echo("Disconnecting " & user.name & " from all services.")
       break
 
-    let message = marshal.to[Message](await user.sockets[m].recvLine())
-    await processMessage(s, message, user, m)
+    try:
+      let message = marshal.to[Message](await user.sockets[m].recvLine())
+      await processMessage(s, message, user, m)
+    except:
+      echo("Bad message passed!")
 
 proc loadAndHandleSocket(s: Server, c: AsyncSocket) {.async.} =
   #Handle server entrance logic for the socket

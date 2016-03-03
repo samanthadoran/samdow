@@ -15,7 +15,14 @@ proc handleMessages(u: User, m: MessageType) {.async.} =
       echo("Socket " & $m & " is nil???")
       continue
 
-    let msg = marshal.to[Message](await u.sockets[m].recvLine())
+    #Don't try to use a bad message
+    let msg =
+      try:
+        marshal.to[Message](await u.sockets[m].recvLine())
+      except:
+        echo("Bad message!")
+        continue
+        nil
 
     let msgTokens = msg.content.toLower().split()
     if len(msgTokens) == 0:
